@@ -67,8 +67,19 @@ ui_input() {
   local prompt="$1"
   local defval="${2:-}"
   local out
-  read -r -p "$prompt [$defval]: " out
-  printf '%s' "${out:-$defval}"
+  printf '\n' >&2
+  printf '%s\n' "$prompt" >&2
+  if [[ -n "$defval" ]]; then
+    printf 'Default: %s\n' "$defval" >&2
+  else
+    printf 'Default: (empty)\n' >&2
+  fi
+  read -r -p "Enter value (leave empty for default): " out
+  if [[ -z "${out:-}" ]]; then
+    printf '%s' "$defval"
+  else
+    printf '%s' "$out"
+  fi
 }
 
 ui_menu() {
@@ -595,7 +606,7 @@ select_role() {
   local def="${1:-iran}"
   ui_menu "$APP_NAME" "Where is this server?" "$def" \
     "iran|Iran" \
-    "abroad|Abroad"
+    "abroad|Kharej"
 }
 
 prompt_common_paths() {
@@ -731,7 +742,7 @@ tunnel_management_menu() {
     "edit|Edit a config" \
     "core|View core.json" \
     "dir|Set target directory" \
-    "role|Change server location (Iran/Abroad)" \
+    "role|Change server location (Iran/Kharej)" \
     "back|Back to main menu") || return 0
 
   case "$choice" in
@@ -1169,9 +1180,9 @@ run_wizard() {
         local listen_port
         listen_port=$(prompt_port "Iran inbound port (example: 443)" "443") || return 1
         local remote_addr
-        remote_addr=$(ui_input "Abroad server IP/domain (enter abroad server IP here)" "1.1.1.1") || return 1
+        remote_addr=$(ui_input "Kharej server IP/domain (enter abroad server IP here)" "1.1.1.1") || return 1
         local remote_port
-        remote_port=$(prompt_port "Abroad inbound port" "443") || return 1
+        remote_port=$(prompt_port "Kharej inbound port" "443") || return 1
 
         local cfg_name="${base_name}_iran"
         local cfg_file="$config_dir/${cfg_name}.json"
@@ -1183,7 +1194,7 @@ run_wizard() {
 
       if [[ "$role" == "abroad" ]]; then
         local listen_port
-        listen_port=$(prompt_port "Abroad inbound port (example: 443)" "443") || return 1
+        listen_port=$(prompt_port "Kharej inbound port (example: 443)" "443") || return 1
         local backend_addr
         backend_addr=$(ui_input "Local service address on abroad server (V2Ray)" "127.0.0.1") || return 1
         local backend_port
@@ -1211,8 +1222,8 @@ run_wizard() {
         local listen_addr listen_port abroad_addr abroad_port sni verify alpn
         listen_addr=$(ui_input "Iran listener address (usually 0.0.0.0)" "0.0.0.0") || return 1
         listen_port=$(prompt_port "Iran inbound port (example: 2083)" "2083") || return 1
-        abroad_addr=$(ui_input "Abroad server IP/domain (enter abroad server IP here)" "1.1.1.1") || return 1
-        abroad_port=$(prompt_port "Abroad TLS port" "443") || return 1
+        abroad_addr=$(ui_input "Kharej server IP/domain (enter abroad server IP here)" "1.1.1.1") || return 1
+        abroad_port=$(prompt_port "Kharej TLS port" "443") || return 1
         sni=$(ui_input "SNI (domain), e.g. mydomain.ir" "mydomain.ir") || return 1
         verify="true"
         if ! ui_confirm "Verify TLS certificate?" "Y"; then
@@ -1230,8 +1241,8 @@ run_wizard() {
 
       if [[ "$role" == "abroad" ]]; then
         local listen_addr listen_port cert_file key_file backend_addr backend_port alpns_csv alpns_json
-        listen_addr=$(ui_input "Abroad listener address (usually 0.0.0.0)" "0.0.0.0") || return 1
-        listen_port=$(prompt_port "Abroad TLS inbound port (example: 443)" "443") || return 1
+        listen_addr=$(ui_input "Kharej listener address (usually 0.0.0.0)" "0.0.0.0") || return 1
+        listen_port=$(prompt_port "Kharej TLS inbound port (example: 443)" "443") || return 1
         cert_file=$(ui_input "TLS cert path (e.g. fullchain.pem)" "fullchain.pem") || return 1
         key_file=$(ui_input "TLS key path (e.g. privkey.pem)" "privkey.pem") || return 1
         backend_addr=$(ui_input "Local service address on abroad server (V2Ray)" "127.0.0.1") || return 1
@@ -1261,8 +1272,8 @@ run_wizard() {
         local listen_addr pmin pmax abroad_addr abroad_port sni password
         listen_addr=$(ui_input "Iran listener address (usually 0.0.0.0)" "0.0.0.0") || return 1
         read -r pmin pmax < <(prompt_port_range "Port range MIN" "Port range MAX" "443" "65535") || return 1
-        abroad_addr=$(ui_input "Abroad server IP/domain (enter abroad server IP here)" "1.1.1.1") || return 1
-        abroad_port=$(prompt_port "Abroad Reality port" "443") || return 1
+        abroad_addr=$(ui_input "Kharej server IP/domain (enter abroad server IP here)" "1.1.1.1") || return 1
+        abroad_port=$(prompt_port "Kharej Reality port" "443") || return 1
         sni=$(ui_input "SNI (domain)" "i.stack.imgur.com") || return 1
         password=$(ui_input "Reality password" "passwd") || return 1
 
@@ -1276,8 +1287,8 @@ run_wizard() {
 
       if [[ "$role" == "abroad" ]]; then
         local listen_addr listen_port sni password
-        listen_addr=$(ui_input "Abroad listener address (usually 0.0.0.0)" "0.0.0.0") || return 1
-        listen_port=$(prompt_port "Abroad Reality inbound port (example: 443)" "443") || return 1
+        listen_addr=$(ui_input "Kharej listener address (usually 0.0.0.0)" "0.0.0.0") || return 1
+        listen_port=$(prompt_port "Kharej Reality inbound port (example: 443)" "443") || return 1
         sni=$(ui_input "SNI destination domain" "i.stack.imgur.com") || return 1
         password=$(ui_input "Reality password" "passwd") || return 1
 
@@ -1314,7 +1325,7 @@ main_menu() {
     if [[ -n "$CURRENT_ROLE" ]]; then
       case "$CURRENT_ROLE" in
         iran) echo "Server role: Iran" ;;
-        abroad) echo "Server role: Abroad" ;;
+        abroad) echo "Server role: Kharej" ;;
         *) echo "Server role: $CURRENT_ROLE" ;;
       esac
     else
@@ -1398,6 +1409,11 @@ case "${1:-}" in
   --install-core)
     ensure_layout || exit 1
     ensure_core_installed 1 || exit 1
+    exit 0
+    ;;
+  --ensure-core)
+    ensure_layout || exit 1
+    ensure_core_installed || exit 1
     exit 0
     ;;
 esac

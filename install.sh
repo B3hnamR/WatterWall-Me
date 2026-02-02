@@ -45,7 +45,7 @@ main() {
   fi
   $SUDO chmod +x "$WIZARD_PATH"
   $SUDO ln -sf "$WIZARD_PATH" /usr/local/bin/waterwall-wizard >/dev/null 2>&1 || true
-  "$WIZARD_PATH" --install-core
+  "$WIZARD_PATH" --ensure-core
 
   echo ""
   echo "Installed. Run: waterwall-wizard"
