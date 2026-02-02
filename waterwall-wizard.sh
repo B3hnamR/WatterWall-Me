@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="WaterWall"
-APP_VERSION="0.2.0"
+APP_VERSION="0.2.1"
 APP_GITHUB="https://github.com/B3hnamR/WatterWall-Me"
 APP_TELEGRAM="@b3hnamrjd"
 CURRENT_ROLE=""
@@ -12,7 +12,9 @@ DEFAULT_CONFIG_VERSION="1"
 DEFAULT_CORE_MIN_VERSION="1"
 DEFAULT_BASE_DIR="${WATERWALL_DIR:-/opt/waterwall}"
 MANAGEMENT_BASE_DIR="$DEFAULT_BASE_DIR"
-CORE_DOWNLOAD_URL="https://github.com/radkesvat/WaterWall/releases/latest/download/Waterwall-linux-64.zip"
+CORE_RELEASE_API_URL="https://api.github.com/repos/radkesvat/WaterWall/releases/latest"
+CORE_FALLBACK_ASSET="Waterwall-linux-gcc-x64-old-cpu.zip"
+CORE_DOWNLOAD_URL=""
 CORE_BIN_NAME="Waterwall"
 CORE_BIN_PATH=""
 SUDO=""
@@ -343,6 +345,126 @@ find_core_bin() {
   return 1
 }
 
+get_arch() {
+  uname -m 2>/dev/null || echo "unknown"
+}
+
+cpu_has_avx512() {
+  if [[ -r /proc/cpuinfo ]]; then
+    grep -qi "avx512" /proc/cpuinfo
+    return $?
+  fi
+  return 1
+}
+
+select_asset_candidates() {
+  local arch
+  arch=$(get_arch)
+  case "$arch" in
+    x86_64|amd64)
+      if cpu_has_avx512; then
+        echo "Waterwall-linux-clang-avx512f-x64.zip"
+      fi
+      echo "Waterwall-linux-clang-x64.zip"
+      echo "Waterwall-linux-gcc-x64.zip"
+      echo "Waterwall-linux-gcc-x64-old-cpu.zip"
+      ;;
+    aarch64|arm64)
+      echo "Waterwall-linux-gcc-arm64.zip"
+      echo "Waterwall-linux-gcc-arm64-old-cpu.zip"
+      ;;
+    armv7l|armv6l)
+      echo "Waterwall-linux-gcc-arm.zip"
+      echo "Waterwall-linux-gcc-arm-old-cpu.zip"
+      ;;
+    *)
+      echo "$CORE_FALLBACK_ASSET"
+      ;;
+  esac
+}
+
+fetch_release_json() {
+  local tmp
+  tmp=$(mktemp)
+  if ! download_file "$CORE_RELEASE_API_URL" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  cat "$tmp"
+  rm -f "$tmp"
+  return 0
+}
+
+extract_asset_url() {
+  local json="$1"
+  local name="$2"
+  if command -v python >/dev/null 2>&1; then
+    printf '%s' "$json" | python - "$name" <<'PY'
+import json, sys
+name = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+    for a in data.get("assets", []):
+        if a.get("name") == name:
+            print(a.get("browser_download_url", ""))
+            break
+except Exception:
+    pass
+PY
+    return 0
+  fi
+  local flat marker after url
+  flat=$(echo "$json" | tr -d '\n')
+  marker="\"name\":\"$name\""
+  if [[ "$flat" != *$marker* ]]; then
+    return 0
+  fi
+  after="${flat#*$marker}"
+  after="${after#*\"browser_download_url\":\"}"
+  url="${after%%\"*}"
+  printf '%s' "$url"
+}
+
+resolve_core_download_url() {
+  local json
+  json=$(fetch_release_json) || return 1
+  local cand url
+  while read -r cand; do
+    [[ -z "$cand" ]] && continue
+    url=$(extract_asset_url "$json" "$cand")
+    if [[ -n "$url" ]]; then
+      CORE_DOWNLOAD_URL="$url"
+      return 0
+    fi
+  done < <(select_asset_candidates)
+  return 1
+}
+
+build_candidate_urls() {
+  if resolve_core_download_url; then
+    echo "$CORE_DOWNLOAD_URL"
+  fi
+  local cand
+  while read -r cand; do
+    [[ -z "$cand" ]] && continue
+    echo "https://github.com/radkesvat/WaterWall/releases/latest/download/$cand"
+  done < <(select_asset_candidates)
+  echo "https://github.com/radkesvat/WaterWall/releases/latest/download/$CORE_FALLBACK_ASSET"
+}
+
+download_core_zip() {
+  local tmp="$1"
+  local url
+  while read -r url; do
+    [[ -z "$url" ]] && continue
+    if download_file "$url" "$tmp"; then
+      CORE_DOWNLOAD_URL="$url"
+      return 0
+    fi
+  done < <(build_candidate_urls)
+  return 1
+}
+
 install_core() {
   if ! need_root; then
     return 1
@@ -353,7 +475,7 @@ install_core() {
     return 1
   fi
   local tmp="/tmp/waterwall-core.zip"
-  if ! download_file "$CORE_DOWNLOAD_URL" "$tmp"; then
+  if ! download_core_zip "$tmp"; then
     ui_msg "Download failed. Check network or URL."
     return 1
   fi
