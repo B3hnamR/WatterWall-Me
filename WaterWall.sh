@@ -139,6 +139,55 @@ ask_port_free() {
   done
 }
 
+ask_obfs_settings() {
+  local method key
+  while true; do
+    read -r -p "Obfuscator method (only xor, default xor): " method
+    method="${method:-xor}"
+    if [[ "$method" != "xor" ]]; then
+      warn "Only xor is supported right now."
+      continue
+    fi
+    OBFS_METHOD="$method"
+    break
+  done
+
+  while true; do
+    read -r -p "Obfuscator XOR key (0-255, default 123): " key
+    key="${key:-123}"
+    [[ "$key" =~ ^[0-9]+$ ]] || { warn "Not a number. Try again."; continue; }
+    if (( key < 0 || key > 255 )); then
+      warn "Out of range. Try again."
+      continue
+    fi
+    OBFS_KEY="$key"
+    break
+  done
+}
+
+prompt_tunnel_node() {
+  echo
+  echo -e "${C_CYAN}Choose peer tunnel node:${C_RESET}"
+  echo "  1) Tcp (plain)"
+  echo "  2) Obfuscator (xor)"
+  echo "  3) HalfDuplex"
+  read -r -p "Select [1-3]: " t
+  case "$t" in
+    1|"") TUNNEL_NODE="tcp" ;;
+    2) TUNNEL_NODE="obfs" ;;
+    3) TUNNEL_NODE="halfduplex" ;;
+    *) err "Invalid."; return 1 ;;
+  esac
+
+  if [[ "$TUNNEL_NODE" == "obfs" ]]; then
+    warn "Use the same obfs settings on both servers."
+    ask_obfs_settings
+  else
+    OBFS_METHOD="${OBFS_METHOD:-xor}"
+    OBFS_KEY="${OBFS_KEY:-123}"
+  fi
+}
+
 write_env() {
   # shellcheck disable=SC2129
   cat > "$WW_ENV" <<EOF
@@ -152,6 +201,9 @@ PEER_PORT="$PEER_PORT"         # reverse peer connects to IRAN:PEER_PORT (same a
 XRAY_ADDR="$XRAY_ADDR"         # on KHAREJ server, where to forward (usually 127.0.0.1)
 XRAY_PORT="$XRAY_PORT"         # xray inbound port on KHAREJ
 MIN_UNUSED="$MIN_UNUSED"       # reverse client minimum-unused
+TUNNEL_NODE="$TUNNEL_NODE"     # tcp | obfs | halfduplex (peer link)
+OBFS_METHOD="$OBFS_METHOD"     # obfs method (xor)
+OBFS_KEY="$OBFS_KEY"           # obfs xor key (0-255)
 EOF
   ok "Saved settings: $WW_ENV"
 }
@@ -167,7 +219,60 @@ load_env() {
   return 1
 }
 
+normalize_env() {
+  TUNNEL_NODE="${TUNNEL_NODE:-tcp}"
+  case "$TUNNEL_NODE" in
+    tcp|obfs|halfduplex) ;;
+    *)
+      warn "Unknown TUNNEL_NODE '$TUNNEL_NODE'. Defaulting to tcp."
+      TUNNEL_NODE="tcp"
+      ;;
+  esac
+
+  OBFS_METHOD="${OBFS_METHOD:-xor}"
+  OBFS_KEY="${OBFS_KEY:-123}"
+  if [[ "$TUNNEL_NODE" == "obfs" ]]; then
+    if [[ "$OBFS_METHOD" != "xor" ]]; then
+      warn "Unsupported obfs method '$OBFS_METHOD'. Using xor."
+      OBFS_METHOD="xor"
+    fi
+    if [[ ! "$OBFS_KEY" =~ ^[0-9]+$ ]] || (( OBFS_KEY < 0 || OBFS_KEY > 255 )); then
+      warn "Invalid OBFS_KEY. Using default 123."
+      OBFS_KEY=123
+    fi
+  fi
+}
+
 write_config_iran() {
+  local peer_next="reverse_server"
+  local peer_extra=""
+  if [[ "$TUNNEL_NODE" == "obfs" ]]; then
+    peer_next="obfs_server"
+    peer_extra=$(cat <<JSON
+    {
+      "name": "obfs_server",
+      "type": "ObfuscatorServer",
+      "settings": {
+        "method": "${OBFS_METHOD}",
+        "xor_key": ${OBFS_KEY}
+      },
+      "next": "reverse_server"
+    }
+JSON
+)
+  elif [[ "$TUNNEL_NODE" == "halfduplex" ]]; then
+    peer_next="halfduplex_server"
+    peer_extra=$(cat <<'JSON'
+    {
+      "name": "halfduplex_server",
+      "type": "HalfDuplexServer",
+      "settings": {},
+      "next": "reverse_server"
+    }
+JSON
+)
+  fi
+
   cat > "$WW_CFG" <<JSON
 {
   "name": "iran_entry_reverse",
@@ -190,7 +295,8 @@ write_config_iran() {
     {
       "name": "b1",
       "type": "Bridge",
-      "settings": { "pair": "b2" }
+      "settings": { "pair": "b2" },
+      "next": "reverse_server"
     },
     {
       "name": "reverse_server",
@@ -207,8 +313,16 @@ write_config_iran() {
         "nodelay": true,
         "whitelist": ["${KHAREJ_IP}/32"]
       },
-      "next": "reverse_server"
+      "next": "${peer_next}"
     }
+JSON
+  if [[ -n "$peer_extra" ]]; then
+    cat >> "$WW_CFG" <<JSON
+,
+$peer_extra
+JSON
+  fi
+  cat >> "$WW_CFG" <<'JSON'
   ]
 }
 JSON
@@ -217,6 +331,35 @@ JSON
 }
 
 write_config_kharej() {
+  local reverse_next="to_iran"
+  local peer_extra=""
+  if [[ "$TUNNEL_NODE" == "obfs" ]]; then
+    reverse_next="obfs_client"
+    peer_extra=$(cat <<JSON
+    {
+      "name": "obfs_client",
+      "type": "ObfuscatorClient",
+      "settings": {
+        "method": "${OBFS_METHOD}",
+        "xor_key": ${OBFS_KEY}
+      },
+      "next": "to_iran"
+    }
+JSON
+)
+  elif [[ "$TUNNEL_NODE" == "halfduplex" ]]; then
+    reverse_next="halfduplex_client"
+    peer_extra=$(cat <<'JSON'
+    {
+      "name": "halfduplex_client",
+      "type": "HalfDuplexClient",
+      "settings": {},
+      "next": "to_iran"
+    }
+JSON
+)
+  fi
+
   cat > "$WW_CFG" <<JSON
 {
   "name": "kharej_reverse_client",
@@ -248,8 +391,17 @@ write_config_kharej() {
       "settings": {
         "minimum-unused": ${MIN_UNUSED}
       },
-      "next": "to_iran"
-    },
+      "next": "${reverse_next}"
+    }
+JSON
+  if [[ -n "$peer_extra" ]]; then
+    cat >> "$WW_CFG" <<JSON
+,
+$peer_extra
+JSON
+  fi
+  cat >> "$WW_CFG" <<JSON
+,
     {
       "name": "to_iran",
       "type": "TcpConnector",
@@ -342,6 +494,10 @@ prompt_role_and_settings() {
     *) err "Invalid."; return 1 ;;
   esac
 
+  if ! prompt_tunnel_node; then
+    return 1
+  fi
+
   echo
   read -r -p "IRAN IP (entry server public IP): " IRAN_IP
   read -r -p "KHAREJ IP (exit server public IP): " KHAREJ_IP
@@ -378,6 +534,7 @@ prompt_role_and_settings() {
 
 apply_config_from_env() {
   load_env || return 1
+  normalize_env
 
   ensure_dirs
   write_core_json
