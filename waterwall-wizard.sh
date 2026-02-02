@@ -99,12 +99,12 @@ ui_menu() {
     fi
   fi
   while true; do
-    echo ""
-    echo "$title"
-    echo "$prompt"
+    printf '\n' >&2
+    printf '%s\n' "$title" >&2
+    printf '%s\n' "$prompt" >&2
     local i=1
     for opt in "${labels[@]}"; do
-      echo "  $i) $opt"
+      printf '  %s) %s\n' "$i" "$opt" >&2
       i=$((i+1))
     done
     local prompt_line="Select [1-${#tags[@]}]"
@@ -120,7 +120,7 @@ ui_menu() {
       printf '%s' "${tags[$((sel-1))]}"
       return 0
     fi
-    echo "Invalid selection."
+    printf '%s\n' "Invalid selection." >&2
   done
 }
 
@@ -645,11 +645,11 @@ select_config_file() {
     local def="${files[0]}"
     ui_menu "$APP_NAME" "Select a config" "$def" "${options[@]}"
   else
-    echo ""
-    echo "Configs in $config_dir:"
+    printf '\n' >&2
+    printf 'Configs in %s:\n' "$config_dir" >&2
     local i=1
     for f in "${files[@]}"; do
-      echo "  $i) $(basename "$f")"
+      printf '  %s) %s\n' "$i" "$(basename "$f")" >&2
       i=$((i+1))
     done
     local sel
@@ -658,7 +658,7 @@ select_config_file() {
       sel="1"
     fi
     if ! [[ "$sel" =~ ^[0-9]+$ ]] || (( sel < 1 || sel > ${#files[@]} )); then
-      echo "Invalid selection."
+      printf '%s\n' "Invalid selection." >&2
       return 1
     fi
     printf '%s' "${files[$((sel-1))]}"
