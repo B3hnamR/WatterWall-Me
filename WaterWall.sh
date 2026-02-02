@@ -22,8 +22,8 @@ C_CYAN="\033[36m"
 
 log()  { echo -e "${C_CYAN}[*]${C_RESET} $*"; }
 ok()   { echo -e "${C_GREEN}[+]${C_RESET} $*"; }
-warn() { echo -e "${C_YELLOW}[!]${C_RESET} $*"; }
-err()  { echo -e "${C_RED}[-]${C_RESET} $*"; }
+warn() { echo -e "${C_YELLOW}[!]${C_RESET} $*" >&2; }
+err()  { echo -e "${C_RED}[-]${C_RESET} $*" >&2; }
 
 require_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
@@ -115,7 +115,7 @@ json_validate() {
 
 port_in_use() {
   local port="$1"
-  ss -lntp 2>/dev/null | awk '{print $4,$NF}' | grep -E "[:\\[]${port}\$" -q
+  ss -lntp 2>/dev/null | awk '{print $4,$NF}' | grep -E "(:|\\[)${port}\$" -q
 }
 
 ask_port_free() {
@@ -131,7 +131,7 @@ ask_port_free() {
     fi
     if port_in_use "$port"; then
       warn "Port $port is in use. Choose another."
-      ss -lntp | grep -E "[:\\[]${port}\b" || true
+      ss -lntp | grep -E "(:|\\[)${port}\b" >&2 || true
       continue
     fi
     echo "$port"
